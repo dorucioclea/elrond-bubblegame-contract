@@ -1,0 +1,126 @@
+{
+    "buildInfo": {
+        "rustc": {
+            "version": "1.61.0-nightly",
+            "commitHash": "1eb72580d076935a3e590deb6e5813a5aef3eca4",
+            "commitDate": "2022-03-08",
+            "channel": "Nightly",
+            "short": "rustc 1.61.0-nightly (1eb72580d 2022-03-08)"
+        },
+        "contractCrate": {
+            "name": "gandtoken",
+            "version": "0.0.0"
+        },
+        "framework": {
+            "name": "elrond-wasm",
+            "version": "0.23.0"
+        }
+    },
+    "name": "GandToken",
+    "constructor": {
+        "inputs": [
+            {
+                "name": "total_supply",
+                "type": "BigUint"
+            }
+        ],
+        "outputs": []
+    },
+    "endpoints": [
+        {
+            "name": "totalSupply",
+            "mutability": "readonly",
+            "inputs": [],
+            "outputs": [
+                {
+                    "type": "BigUint"
+                }
+            ]
+        },
+        {
+            "name": "balanceOf",
+            "mutability": "readonly",
+            "inputs": [
+                {
+                    "name": "account",
+                    "type": "Address"
+                }
+            ],
+            "outputs": [
+                {
+                    "type": "BigUint"
+                }
+            ]
+        },
+        {
+            "name": "allowance",
+            "mutability": "readonly",
+            "inputs": [
+                {
+                    "name": "owner",
+                    "type": "Address"
+                },
+                {
+                    "name": "spender",
+                    "type": "Address"
+                }
+            ],
+            "outputs": [
+                {
+                    "type": "BigUint"
+                }
+            ]
+        },
+        {
+            "name": "transfer",
+            "mutability": "mutable",
+            "inputs": [
+                {
+                    "name": "to",
+                    "type": "Address"
+                },
+                {
+                    "name": "amount",
+                    "type": "BigUint"
+                }
+            ],
+            "outputs": []
+        },
+        {
+            "name": "transferFrom",
+            "mutability": "mutable",
+            "inputs": [
+                {
+                    "name": "from",
+                    "type": "Address"
+                },
+                {
+                    "name": "to",
+                    "type": "Address"
+                },
+                {
+                    "name": "amount",
+                    "type": "BigUint"
+                }
+            ],
+            "outputs": []
+        },
+        {
+            "name": "approve",
+            "mutability": "mutable",
+            "inputs": [
+                {
+                    "name": "spender",
+                    "type": "Address"
+                },
+                {
+                    "name": "amount",
+                    "type": "BigUint"
+                }
+            ],
+            "outputs": []
+        }
+    ],
+    "hasCallback": false,
+    "types": {}
+}

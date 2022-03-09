@@ -1,0 +1,57 @@
+{
+  "name": "gandtoken deployment test",
+  "steps": [
+    {
+      "step": "setState",
+      "accounts": {
+        "address:my_address": {
+          "nonce": "0",
+          "balance": "100,000,000"
+        }
+      },
+      "newAddresses": [
+        {
+          "creatorAddress": "address:my_address",
+          "creatorNonce": "0",
+          "newAddress": "sc:the_gandtoken_contract"
+        }
+      ]
+    },
+    {
+      "step": "scDeploy",
+      "tx": {
+        "from": "address:my_address",
+        "contractCode": "file:../output/gandtoken.wasm",
+        "value": "0",
+        "gasLimit": "10,000,000",
+        "gasPrice": "0",
+        "arguments": [
+          "500,000,000"
+        ]
+      },
+      "expect": {
+        "status": "0",
+        "gas": "*",
+        "refund": "*"
+      }
+    },
+    {
+      "step": "checkState",
+      "accounts": {
+        "address:my_address": {
+          "nonce": "1",
+          "balance": "100,000,000"
+        },
+        "sc:the_gandtoken_contract": {
+          "nonce": "0",
+          "balance": "0",
+          "storage": {
+            "''totalSupply": "500,000,000",
+            "str:balanceOf|address:my_address": "500,000,000"
+          },
+          "code": "file:../output/gandtoken.wasm"
+        }
+      }
+    }
+  ]
+}
