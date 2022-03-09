@@ -1,2 +1,2 @@
 # Elrond-Game-Contract
-sfadf
+Build own token contract, staking, governance, game contract for elrond game.
