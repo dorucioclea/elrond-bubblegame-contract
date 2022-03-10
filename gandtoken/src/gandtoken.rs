@@ -1,6 +1,7 @@
 #![no_std]
 
 elrond_wasm::imports!();
+use mint;
 
 #[elrond_wasm::contract]
 pub trait GandToken {
