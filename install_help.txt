@@ -5,8 +5,11 @@ Please follow "Software Prerequisites"
 
 - Build and Deploy
 
-****For Build****
+For Build
+
 erdpy contract build
 
-****For Deploy****
+
+For Deploy
+
 python3 ./interaction/deploy_mint.py --pem=../wallet/wallet-owner.pem --proxy=https://testnet-gateway.elrond.com
