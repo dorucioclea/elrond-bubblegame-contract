@@ -7,9 +7,14 @@ Please follow "Software Prerequisites"
 
 For Build
 
-erdpy contract build
-
+    erdpy contract build
 
 For Deploy
 
-python3 ./interaction/deploy_mint.py --pem=../wallet/wallet-owner.pem --proxy=https://testnet-gateway.elrond.com
+    python3 ./interaction/deploy_mint.py --pem=../wallet/wallet-owner.pem --proxy=https://testnet-gateway.elrond.com
+
+Total Supply
+
+please check the source in 63 line of interaction/deploy_mint.py
+    arguments=["str:GANDTOKEN", "str:GAND", 1000000000000]
+    1000000000000: total supply(You can change)
