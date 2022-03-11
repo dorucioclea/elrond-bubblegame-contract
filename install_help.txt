@@ -1,0 +1,12 @@
+- Elrond WASM environment install
+
+https://docs.elrond.com/developers/tutorials/your-first-dapp/
+Please follow "Software Prerequisites"
+
+- Build and Deploy
+
+****For Build****
+erdpy contract build
+
+****For Deploy****
+python3 ./interaction/deploy_mint.py --pem=../wallet/wallet-owner.pem --proxy=https://testnet-gateway.elrond.com

@@ -1,9 +1,9 @@
 [package]
 name = "gandtoken-wasm"
 version = "0.0.0"
-authors = [ "you",]
 edition = "2018"
 publish = false
+authors = [ "you",]
 
 [lib]
 crate-type = [ "cdylib",]
@@ -24,8 +24,8 @@ panic = "abort"
 path = ".."
 
 [dependencies.elrond-wasm-node]
-version = "0.23.0"
+version = "0.29.3"
 
 [dependencies.elrond-wasm-output]
-version = "0.23.0"
+version = "0.29.3"
 features = [ "wasm-output-mode",]
