@@ -1,4 +1,0 @@
-- Elrond WASM environment install
-
-https://docs.elrond.com/developers/tutorials/your-first-dapp/
-Please follow "Software Prerequisites"
