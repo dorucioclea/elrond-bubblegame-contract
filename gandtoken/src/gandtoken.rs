@@ -3,19 +3,15 @@
 elrond_wasm::imports!();
 elrond_wasm::derive_imports!();
 
-const EGLD_NUM_DECIMALS: usize = 18;
-/*
-
-const TEAM_ADDR: &str = "erd1qqqqqqqqqqqqqpgqe50qczp84jdlefhahxfgj3dqlkuafu0q0n4s0pgjmh";
-const MARKET_ADDR: &str = "erd1qqqqqqqqqqqqqpgqe50qczp84jdlefhahxfgj3dqlkuafu0q0n4s0pgjmh";
-
-*/
+const TOKEN_DECIMALS: usize = 18;
 
 #[elrond_wasm::contract]
 pub trait GandToken {
+    
     #[init]
     fn init(&self) {
-
+        self.total_supply().set(&BigUint::zero());
+        self.token_distribute_ended().set(false);
     }
     
     #[callback]
@@ -25,19 +21,14 @@ pub trait GandToken {
         #[call_result] result: ManagedAsyncCallResult<()>,
     ) {
         let (returned_tokens, token_identifier) = self.call_value().payment_token_pair();
-
-        // callback is called with ESDTTransfer of the newly issued token, with the amount requested,
-        // so we can get the token identifier and amount from the call data
         match result {
             ManagedAsyncCallResult::Ok(()) => {
                 self.issue_success_event(caller, &token_identifier, &returned_tokens);
-                self.wrapped_egld_token_id().set(&token_identifier);
+                self.issue_token_id().set(&token_identifier);
             },
             ManagedAsyncCallResult::Err(message) => {
+                
                 self.issue_failure_event(caller, &message.err_msg);
-
-                // return issue cost to the owner
-                // TODO: test that it works
                 if token_identifier.is_egld() && returned_tokens > 0 {
                     self.send().direct_egld(caller, &returned_tokens, &[]);
                 }
@@ -45,34 +36,43 @@ pub trait GandToken {
         }
     }
 
-    #[only_owner]
-    #[endpoint(setLocalRoles)]
-    fn set_local_roles(&self) {
-        require!(
-            !self.wrapped_egld_token_id().is_empty(),
-            "Must issue token first"
-        );
+    // #[only_owner]
+    // #[endpoint(setLocalRoles)]
+    // fn set_local_roles(&self) {
+    //     require!(
+    //         !self.issue_token_id().is_empty(),
+    //         "token was still issued"
+    //     );
 
-        let roles = [EsdtLocalRole::Mint, EsdtLocalRole::Burn];
-        self.send()
-            .esdt_system_sc_proxy()
-            .set_special_roles(
-                &self.blockchain().get_sc_address(),
-                &self.wrapped_egld_token_id().get(),
-                roles[..].iter().cloned(),
-            )
-            .async_call()
-            .call_and_exit()
-    }
+    //     let roles = [EsdtLocalRole::Mint, EsdtLocalRole::Burn];
+    //     self.send()
+    //         .esdt_system_sc_proxy()
+    //         .set_special_roles(
+    //             &self.blockchain().get_sc_address(),
+    //             &self.issue_token_id().get(),
+    //             roles[..].iter().cloned(),
+    //         )
+    //         .async_call()
+    //         .call_and_exit()
+    // }
 
     #[only_owner]
     #[payable("EGLD")]
     #[endpoint(issueTokens)]
-    fn issue_tokens(&self, token_display_name: ManagedBuffer, token_ticker: ManagedBuffer, initial_supply: BigUint) {
+    fn issue_tokens(&self, token_display_name: ManagedBuffer, token_ticker: ManagedBuffer) {
+        require!(
+            self.issue_token_id().is_empty(),
+            "token was already issued"
+        );
+
+        let totalSupply: BigUint = BigUint::from(1_000_000_000_000u64).mul(&BigUint::from(1_000_000_000_000_000_000u64));
+        self.total_supply().set(&totalSupply);
+
         let issue_cost = self.call_value().egld_value();
         let caller = self.blockchain().get_caller();
+        let initial_supply: &BigUint = &self.total_supply().get();
 
-        self.issue_started_event(&caller, &token_ticker, &initial_supply);
+        self.issue_started_event(&caller, &token_ticker, initial_supply);
 
         self.send()
             .esdt_system_sc_proxy()
@@ -80,9 +80,9 @@ pub trait GandToken {
                 issue_cost,
                 &token_display_name,
                 &token_ticker,
-                &initial_supply,
+                initial_supply,
                 FungibleTokenProperties {
-                    num_decimals: EGLD_NUM_DECIMALS,
+                    num_decimals: TOKEN_DECIMALS,
                     can_freeze: false,
                     can_wipe: false,
                     can_pause: false,
@@ -99,47 +99,58 @@ pub trait GandToken {
     }
 
     #[only_owner]
-    #[endpoint(mintToken)]
-    fn mint_token(&self, amount: BigUint) {       
-        let wrapped_egld_token_id = self.wrapped_egld_token_id().get();
-        self.send()
-            .esdt_local_mint(&wrapped_egld_token_id, 0, &amount);
-    }
-
-    #[payable("*")]
-    #[endpoint(unwrapEgld)]
-    fn unwrap_egld(&self) {
-        let (payment_amount, payment_token) = self.call_value().payment_token_pair();
-        let wrapped_egld_token_id = self.wrapped_egld_token_id().get();
-
-        require!(payment_token == wrapped_egld_token_id, "Wrong esdt token");
-        require!(payment_amount > 0u32, "Must pay more than 0 tokens!");
-        // this should never happen, but we'll check anyway
+    #[endpoint(distributeToken)]
+    fn distribute_tokens(
+        &self,
+        game_address: ManagedAddress,
+        dao_address: ManagedAddress,
+        liquidity_address: ManagedAddress,
+        staking_address: ManagedAddress,
+        marketing_address: ManagedAddress,
+        team_address: ManagedAddress
+    ) { 
         require!(
-            payment_amount <= self.get_locked_egld_balance(),
-            "Contract does not have enough funds"
+            !self.issue_token_id().is_empty(),
+            "token was still issued"
         );
+        require!(!self.token_distribute_ended().get(), "token was already distributed");
+        self.token_distribute_ended().set(true);
 
-        self.send()
-            .esdt_local_burn(&wrapped_egld_token_id, 0, &payment_amount);
-
-        // 1 wrapped eGLD = 1 eGLD, so we pay back the same amount
-        let caller = self.blockchain().get_caller();
-        self.send().direct_egld(&caller, &payment_amount, &[]);
+        let total_supply = self.total_supply().get();
+        let token_id = &self.issue_token_id().get();
+        let game_amount = self.total_supply().get().div(BigUint::from(100u32)).mul(BigUint::from(25u32));
+        let dao_amount = self.total_supply().get().div(BigUint::from(100u32)).mul(BigUint::from(45u32));
+        let liquidity_amount = self.total_supply().get().div(BigUint::from(100u32)).mul(BigUint::from(10u32));
+        let staking_amount = self.total_supply().get().div(BigUint::from(100u32)).mul(BigUint::from(12u32));
+        let marketing_amount = self.total_supply().get().div(BigUint::from(100u32)).mul(BigUint::from(4u32));
+        let team_amount = total_supply.div(BigUint::from(100u32)).mul(BigUint::from(4u32));
+        self.send().direct(&game_address, &token_id, 0, &game_amount, &[]);
+        self.send().direct(&dao_address, &token_id, 0, &dao_amount, &[]);
+        self.send().direct(&liquidity_address, &token_id, 0, &liquidity_amount, &[]);
+        self.send().direct(&staking_address, &token_id, 0, &staking_amount, &[]);
+        self.send().direct(&marketing_address, &token_id, 0, &marketing_amount, &[]);
+        self.send().direct(&team_address, &token_id, 0, &team_amount, &[]);
     }
 
-    #[view(getLockedEgldBalance)]
-    fn get_locked_egld_balance(&self) -> BigUint {
+    #[view(getBalanceOf)]
+    fn balance_of(&self, address: ManagedAddress) -> BigUint {
         self.blockchain()
-            .get_sc_balance(&TokenIdentifier::egld(), 0)
+            .get_esdt_balance(&address, &self.issue_token_id().get(), 0)
     }
+
+    #[view(getTotalSupply)]
+     #[storage_mapper("totalSupply")]
+    fn total_supply(&self) -> SingleValueMapper<BigUint>;
 
     // storage
 
-    #[view(getWrappedEgldTokenIdentifier)]
-    #[storage_mapper("wrappedEgldTokenId")]
-    fn wrapped_egld_token_id(&self) -> SingleValueMapper<TokenIdentifier>;
+    #[view(getTokenDistributeEnded)]
+    #[storage_mapper("tokenDistributeEnded")]
+    fn token_distribute_ended(&self) -> SingleValueMapper<bool>;
 
+    #[view(getIssueTokenId)]
+    #[storage_mapper("issueTokenId")]
+    fn issue_token_id(&self) -> SingleValueMapper<TokenIdentifier>;
     // events
 
     #[event("issue-started")]
@@ -160,11 +171,5 @@ pub trait GandToken {
 
     #[event("issue-failure")]
     fn issue_failure_event(&self, #[indexed] caller: &ManagedAddress, message: &ManagedBuffer);
-
-    #[event("wrap-egld")]
-    fn wrap_egld_event(&self, #[indexed] user: &ManagedAddress, amount: &BigUint);
-
-    #[event("unwrap-egld")]
-    fn unwrap_egld_event(&self, #[indexed] user: &ManagedAddress, amount: &BigUint);
 
 }

@@ -11,7 +11,7 @@ For Build
 
 For Deploy
 
-    python3 ./interaction/deploy_mint.py --pem=../wallet/wallet-owner.pem --proxy=https://testnet-gateway.elrond.com
+    python3 ./interaction/deploy_mint.py --pem=../wallet/wallet-owner.pem --proxy=https://devnet-gateway.elrond.com
 
 Total Supply
 
