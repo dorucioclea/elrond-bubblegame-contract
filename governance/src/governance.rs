@@ -1,11 +1,27 @@
 #![no_std]
+#![allow(clippy::type_complexity)]
+#![feature(generic_associated_types)]
 
+use proposal::ProposalCreationArgs;
 
 elrond_wasm::imports!();
 elrond_wasm::derive_imports!();
 
+pub mod errors;
+pub mod config;
+pub mod proposal;
+mod lib;
+pub mod vote;
+pub mod event;
+
+use crate::proposal::*;
+use crate::errors::*;
+use crate::vote::*;
+
+
 #[elrond_wasm::contract]
-pub trait Governance
+pub trait Governance:
+    config::Config + lib::Lib + proposal::ProposalHelper + event::Event
 {
     #[init]
     fn init(
@@ -13,110 +29,119 @@ pub trait Governance
         quorum: BigUint,
         voting_delay_in_blocks: u64,
         voting_period_in_blocks: u64,
-        vote_nft_id: TokenIdentifier,
-        mex_token_id: TokenIdentifier,
         min_weight_for_proposal: BigUint,
-        governance_token_ids: ManagedVec<TokenIdentifier>,
-        #[var_args] price_providers: MultiValueEncoded<
-            MultiValue2<TokenIdentifier, ManagedAddress>,
-        >,
+        guardian: ManagedAddress,
+        staking_provider: ManagedAddress,
+        grace_period: u64,
+        timelock_delay: u64,
+                
     ) {
         self.try_change_quorum(quorum);
-        self.try_change_vote_nft_id(vote_nft_id);
-        self.try_change_mex_token_id(mex_token_id);
-        self.try_change_governance_token_ids(governance_token_ids);
         self.try_change_voting_delay_in_blocks(voting_delay_in_blocks);
         self.try_change_voting_period_in_blocks(voting_period_in_blocks);
         self.try_change_min_weight_for_proposal(min_weight_for_proposal);
-        self.try_change_price_providers(price_providers);
+        self.try_change_guardian(guardian);
+        self.try_change_staking_provider(staking_provider);
+        self.timelock_delay().set(timelock_delay);
+        self.grace_period().set(grace_period);
     }
 
-    #[payable("*")]
     #[endpoint]
     fn propose(&self, args: ProposalCreationArgs<Self::Api>) -> u64 {
-        let payment = self.call_value().payment();
-        self.require_is_accepted_payment(&payment);
+        let caller = self.blockchain().get_caller();
 
-        let vote_weight = self.get_vote_weight(&payment);
+        let vote_weight = self.get_vote_weight(&caller);
         let min_weight = self.min_weight_for_proposal().get();
-        require!(vote_weight >= min_weight, NOT_ENOUGH_FUNDS_TO_PROPOSE);
+        require!(vote_weight >= min_weight, NOT_ENOUGH_WEIGHT_TO_PROPOSE);
 
-        let mut proposal = self.new_proposal_from_args(args);
+        let proposal = self.new_proposal_from_args(args);
         self.proposal_id_counter().set(proposal.id + 1);
 
-        proposal.num_upvotes = vote_weight.clone();
         self.proposal(proposal.id).set(&proposal);
-
-        self.require_is_accepted_payment(&payment);
-
-        let vote_weight = self.get_vote_weight(&payment);
-        let min_weight = self.min_weight_for_proposal().get();
-        require!(vote_weight < min_weight, NOT_ENOUGH_FUNDS_TO_PROPOSE);
-
-       
-        let nonce = self.send().esdt_nft_create(
-            &vote_nft_id,
-            &big_one,
-            &ManagedBuffer::new(),
-            &BigUint::zero(),
-            &ManagedBuffer::new(),
-            &attr,
-            &ManagedVec::new(),
-        );
-
-        EsdtTokenPayment::new(vote_nft_id, nonce, big_one)
+        self.create_proposal_event(proposal.id);
         proposal.id
+    }
+    
+    #[endpoint]
+    fn upvote(&self, proposal_id: u64) {
+        self.vote(proposal_id, VoteType::Upvote);
+    }
+
+    #[endpoint]
+    fn downvote(&self, proposal_id: u64) {
+        self.vote(proposal_id, VoteType::DownVote);
+    }
+
+    #[view]
+    fn state(&self, proposal_id: u64) -> ProposalStatus{
+        require!(!self.proposal(proposal_id).is_empty(), PROPOSAL_NOT_FOUND);
+        let proposal = self.proposal(proposal_id).get();
+        let pstat = self.get_proposal_status(&proposal);
+        return pstat;
     }
 
     #[endpoint]
     fn execute(&self, proposal_id: u64) {
         require!(!self.proposal(proposal_id).is_empty(), PROPOSAL_NOT_FOUND);
         let mut proposal = self.proposal(proposal_id).get();
+        let timestamp = self.blockchain().get_block_timestamp();
+
+        let pstat = self.get_proposal_status(&proposal);
+        require!(pstat == ProposalStatus::Queued, PROPOSAL_NOT_QUEUED);
+        require!(timestamp >= proposal.eta && timestamp < proposal.eta + self.grace_period().get(), NOT_SURPASSED_TIME_LOCK);
+
+        proposal.was_executed = true;
+        self.execute_proposal(&proposal);
+        self.proposal(proposal_id).set(&proposal);
+
+        self.execute_proposal_event(proposal.id);
+    }
+
+    #[endpoint]
+    fn queue(&self, proposal_id: u64) {
+        require!(!self.proposal(proposal_id).is_empty(), PROPOSAL_NOT_FOUND);
+        let mut proposal = self.proposal(proposal_id).get();
 
         let pstat = self.get_proposal_status(&proposal);
         require!(pstat == ProposalStatus::Succeeded, PROPOSAL_NOT_SUCCEEDED);
 
-        self.execute_proposal(&proposal);
-        proposal.was_executed = true;
+        proposal.eta = self.blockchain().get_block_timestamp() + self.timelock_delay().get();
         self.proposal(proposal_id).set(&proposal);
+
+        self.queue_proposal_event(proposal_id);
+    }
+    
+    #[endpoint]
+    fn cancel(&self, proposal_id: u64) {
+        require!(!self.proposal(proposal_id).is_empty(), PROPOSAL_NOT_FOUND);
+
+        let mut proposal = self.proposal(proposal_id).get();
+        let pstat = self.get_proposal_status(&proposal);
+        let caller = self.blockchain().get_caller();
+
+        require!(pstat != ProposalStatus::Executed, PROPOSAL_NOT_CANCEL);
+        require!(caller == self.guardian().get(), CALLER_NOT_GUARDIAN);
+
+        proposal.was_canceled = true;
+        self.proposal(proposal_id).set(&proposal);
+
+        self.cancel_proposal_event(proposal_id);
     }
 
+    #[endpoint]
     fn vote(&self, proposal_id: u64, vote_type: VoteType) {
+        let voter = self.blockchain().get_caller();
+
         require!(!self.proposal(proposal_id).is_empty(), PROPOSAL_NOT_FOUND);
+        require!(self.receipt(proposal_id, voter.clone()).is_empty(), ALREADY_VOTED);
+
         let mut proposal = self.proposal(proposal_id).get();
-        et vote_weight = self.get_vote_weight(&payment);
-        require!(vote_weight != 0, ERROR_ZERO_VALUE);
-
-
         let pstat = self.get_proposal_status(&proposal);
         require!(pstat == ProposalStatus::Active, PROPOSAL_NOT_ACTIVE);
 
-        let payment = self.call_value().payment();
-        self.require_is_accepted_payment(&payment);
+        
+        let vote_weight = self.get_vote_weight(&voter);
 
-        l
-        match vote_type {
-            VoteType::Upvote => proposal.num_upvotes += &vote_weight,
-            VoteType::DownVote => proposal.num_downvotes += &vote_weight,
-        }
-
-        let vote_nft = self.create_vote_nft(proposal.id, vote_type, vote_weight, payment);
-        self.send_back(vote_nft);
-
-        self.proposal(proposal_id).set(&proposal);
-    }
-	
-	fn pending_vote(&self, proposal_id: u64, vote_type: VoteType) {
-        require!(!self.proposal(proposal_id).is_empty(), PROPOSAL_NOT_FOUND);
-        let mut proposal = self.proposal(proposal_id).get();
-
-        let pstat = self.get_proposal_status(&proposal);
-        require!(pstat == ProposalStatus::Pending, PROPOSAL_NOT_ACTIVE);
-
-        let payment = self.call_value().payment();
-        self.require_is_accepted_payment(&payment);
-
-        let vote_weight = self.get_vote_weight(&payment);
         require!(vote_weight != 0, ERROR_ZERO_VALUE);
 
         match vote_type {
@@ -124,30 +149,12 @@ pub trait Governance
             VoteType::DownVote => proposal.num_downvotes += &vote_weight,
         }
 
-        let vote_nft = self.create_vote_nft(proposal.id, vote_type, vote_weight, payment);
-        self.send_back(vote_nft);
-
         self.proposal(proposal_id).set(&proposal);
-    }
 
-    #[payable("*")]
-    #[endpoint]
-    fn redeem(&self) {
-        let payment = self.call_value().payment();
-
-       
-        let attr = self.get_vote_attr(&payment);
-        let proposal = self.proposal(attr.proposal_id).get();
-        let pstat = self.get_proposal_status(&proposal);
-
-        match pstat {
-            ProposalStatus::Succeeded | ProposalStatus::Defeated | ProposalStatus::Executed => {
-                self.send_back(attr.payment);
-                self.burn_vote_nft(payment);
-            }
-            ProposalStatus::Active | ProposalStatus::Pending => {
-                sc_panic!(VOTING_PERIOD_NOT_ENDED)
-            }
-        }
+        let receipt = Receipt {
+            support: vote_type,
+            votes: vote_weight,
+        };
+        self.receipt(proposal_id, voter).set(&receipt);
     }
 }
