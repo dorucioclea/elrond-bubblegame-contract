@@ -4,7 +4,7 @@ elrond_wasm::imports!();
 elrond_wasm::derive_imports!();
 
 const TOKEN_DECIMAL: u32 = 18;
-const STAKE_MONTHS: [u64; 3] = [6, 12, 24];
+const STAKE_MONTHS: [u64; 4] = [6, 12, 18, 24];
 const MONTHLY_REWARDS: [u64; 24] = [
     15_000_000_000,  12_900_000_000,  11_100_000_000,   9_600_000_000,
     8_200_000_000,   7_100_000_000,   6_100_000_000,    5_300_000_000,
@@ -14,14 +14,23 @@ const MONTHLY_REWARDS: [u64; 24] = [
     2_500_000_000,   2_500_000_000,   2_500_000_000,    2_500_000_000
 ];
 
+const POW_DECIMAL: u64 = 1_000_000_000_000_000_000;
+const YEAR_DAYS: u64 = 365;
+const MONTH_DAYS: u64 = 30;
+const DAY_SECONDS: u64 = 86400;
+const STAKING_PERIOD_DAYS: usize = 24 * 30;
+
 #[derive(TypeAbi, TopEncode, TopDecode, PartialEq, Debug)]
 pub struct StakeInfo<M: ManagedTypeApi>{
     pub address: ManagedAddress<M>,
     pub stake_amount: BigUint<M>,
-    pub stake_option: u32,
+    pub stake_option: usize,
     pub lock_time: u64,
-    pub unstake_time: u64,
-    pub lock_month: usize
+    pub unlock_time: u64,
+    pub last_claim_time: u64,
+    pub from_day: usize,
+    pub to_day: usize,
+    pub last_claim_day: usize,
 }
 
 #[elrond_wasm::contract]
@@ -38,9 +47,9 @@ pub trait TokenStaking{
         let zero = BigUint::zero();
         self.total_staking_amount().set(zero);
 
-        let m: usize;
-        for m in 0..24 {
-            self.month_distributed(m).set(&BigUint::zero())
+        let d: usize;
+        for d in 0..STAKING_PERIOD_DAYS {
+            self.day_distributed(d).set(&BigUint::zero())
         }
 
     }
@@ -52,7 +61,7 @@ pub trait TokenStaking{
         self.staking_status().set(true);
         let cur_time: u64 = self.blockchain().get_block_timestamp();
         self.staking_start_time().set(cur_time);
-        self.staking_end_time().set(cur_time + 24 * 30 * 86400);
+        self.staking_end_time().set(cur_time + (STAKING_PERIOD_DAYS as u64) * DAY_SECONDS);
     }
 
     #[only_owner]
@@ -70,10 +79,10 @@ pub trait TokenStaking{
         let cur_time: u64 = self.blockchain().get_block_timestamp();
         require!(cur_time < self.staking_end_time().get(), "The staking date has already passed"); 
 
-        let cur_day = (cur_time - self.staking_start_time().get()) / 86400;
+        let cur_day = (cur_time - self.staking_start_time().get()) / DAY_SECONDS;
         
-        let _month: usize = (cur_day / 30) as usize;
-        let _day = cur_day % 30;
+        let _month: usize = (cur_day / MONTH_DAYS) as usize;
+        let _day = cur_day % MONTH_DAYS;
         let mut reward_amount = BigUint::zero();
 
         let mut m: usize;
@@ -81,85 +90,129 @@ pub trait TokenStaking{
             reward_amount = reward_amount.add(&BigUint::from(MONTHLY_REWARDS[m]));
         }
 
-        let reward = BigUint::from(MONTHLY_REWARDS[_month]).div(30u32).mul(_day + 1);
-        reward_amount = reward_amount.add(&reward).mul(&BigUint::from(1_000_000_000_000_000_000u64));
+        let reward = BigUint::from(MONTHLY_REWARDS[_month]).div(MONTH_DAYS).mul(_day + 1);
+        reward_amount = reward_amount.add(&reward).mul(&BigUint::from(POW_DECIMAL));
         let total_staking_amount = self.total_staking_amount().get();
-        let apy: BigUint = reward_amount.mul(365u32).div(total_staking_amount).div(cur_day + 1);
+        let apy: BigUint = reward_amount.mul(YEAR_DAYS).div(total_staking_amount).div(cur_day + 1);
         return apy;
     }
 
+
     #[payable("*")]    
     #[endpoint]
-    fn stake(&self, stake_option: u32) {
+    fn stake(&self, stake_option: usize) {
         require!(self.staking_status().get(), "The staking haven't started yet.");
         let (payment_amount, payment_token) = self.call_value().payment_token_pair();
         let caller: ManagedAddress = self.blockchain().get_caller();
 
         require!(payment_token == self.staking_token_id().get(), "Invalid staking token");
-        require!(stake_option < 3u32, "Invalid staking option");
+        require!(stake_option < STAKE_MONTHS.len(), "Invalid staking option");
         require!(self.staking_info(&caller).is_empty(), "You have already staked.");
         require!(payment_amount >= self.minimum_staking_amount().get(), "The staking amount must be greater than minimum amount.");
 
-        let index: u32 = stake_option;        
         let stake_amount:BigUint = payment_amount.clone();
-        let cur_time: u64 = self.blockchain().get_block_timestamp();
-        let unstake_time = cur_time + (STAKE_MONTHS[index as usize] * 30 * 86400);
-        let month: usize = ((cur_time - self.staking_start_time().get()) / (30 * 86400)) as usize;
-        let mut staked_month = STAKE_MONTHS[index as usize] as usize;
+        let lock_time: u64 = self.blockchain().get_block_timestamp();
+        let unlock_time = lock_time + (STAKE_MONTHS[stake_option] * MONTH_DAYS * DAY_SECONDS);
+        let from_day: usize = ((lock_time - self.staking_start_time().get()) / DAY_SECONDS) as usize;
+        let mut to_day = from_day + (STAKE_MONTHS[stake_option] * MONTH_DAYS) as usize;
+
+        if to_day > STAKING_PERIOD_DAYS {
+            to_day = STAKING_PERIOD_DAYS
+        }
 
         let stake_info = StakeInfo {
             address: self.blockchain().get_caller(),
             stake_amount: stake_amount,
             stake_option: stake_option,
-            lock_time: cur_time,
-            unstake_time: unstake_time,
-            lock_month: month
+            lock_time: lock_time,
+            unlock_time: unlock_time,
+            last_claim_time: lock_time,
+            from_day: from_day,
+            to_day: to_day, 
+            last_claim_day: from_day,
         };
 
-        let m: usize;
-        if month + staked_month > 24 {
-            staked_month = 24 - month;
-        } 
-        for m in 0..staked_month {
-            self.month_distributed(m + month).update(|amount| *amount += payment_amount.clone());
+        let d: usize; 
+        for d in from_day..to_day {
+            self.day_distributed(d).update(|amount| *amount += payment_amount.clone());
         }
 
         self.staking_info(&self.blockchain().get_caller()).set(&stake_info);
+        
         let total_stake_amount = self.total_staking_amount().get();
         self.total_staking_amount().set(total_stake_amount.add(&payment_amount));
     }
 
     #[endpoint]
-    fn unstake(&self, stake_option: u32) {
+    fn unstake(&self) {
         let caller: ManagedAddress = self.blockchain().get_caller();
         let cur_time: u64 = self.blockchain().get_block_timestamp();
 
         require!(!self.staking_info(&caller).is_empty(), "You didn't stake!");
         let stake_info = self.staking_info(&caller).get();
-        require!(stake_info.unstake_time <= cur_time, "You can't unlock staking token yet.");
+        require!(stake_info.unlock_time <= cur_time, "You can't unlock staking token yet.");
 
         let stake_token_id = self.staking_token_id().get();
-        let unstake_amount: BigUint = stake_info.stake_amount;
-        let month = stake_info.lock_month;
-        
-        let mut staked_month = STAKE_MONTHS[stake_info.stake_option as usize] as usize;
-        let m: usize;
-        let mut reward_tokens = BigUint::zero();
+        let stake_amount: BigUint = stake_info.stake_amount;
 
-        if month + staked_month > 24 {
-            staked_month = 24 - month;
-        } 
-
-        for m in 0..staked_month {
-            let month_reward = BigUint::from(MONTHLY_REWARDS[m + month]);
-            reward_tokens += month_reward * unstake_amount.clone() / self.month_distributed(m + month).get();
-        }
-        reward_tokens = reward_tokens.mul(&BigUint::from(1_000_000_000_000_000_000u64));
-        reward_tokens += unstake_amount;
         self.send()
-            .direct(&caller, &stake_token_id, 0, &reward_tokens, &[]);
+            .direct(&caller, &stake_token_id, 0, &stake_amount, &[]);
                
         self.staking_info(&caller).clear();
+        let total_stake_amount = self.total_staking_amount().get();
+        self.total_staking_amount().set(total_stake_amount.sub(&stake_amount));
+    }
+
+    #[endpoint]
+    fn claim(&self) {
+        let caller: ManagedAddress = self.blockchain().get_caller();
+        let cur_time: u64 = self.blockchain().get_block_timestamp();
+
+        require!(!self.staking_info(&caller).is_empty(), "You didn't stake!");
+        let rewards = self.get_rewards(&caller);
+        require!(rewards > 0, "You haven't claim amount");
+        let stake_token_id = self.staking_token_id().get();
+        let mut stake_info = self.staking_info(&caller).get();
+        let to_day: usize = stake_info.to_day;
+
+        let mut cur_day: usize = ((cur_time - self.staking_start_time().get()) / DAY_SECONDS) as usize;
+        if cur_day > to_day {
+            cur_day = to_day;
+        }
+        
+        self.send()
+            .direct(&caller, &stake_token_id, 0, &rewards, &[]);
+        
+        stake_info.last_claim_time = cur_time;
+        stake_info.last_claim_day = cur_day;
+        self.staking_info(&caller).set(stake_info);
+
+    } 
+
+    #[view(getRewards)]
+    fn get_rewards(&self, user: &ManagedAddress) -> BigUint {
+        require!(!self.staking_info(&user).is_empty(), "You didn't stake!");
+
+        let stake_info = self.staking_info(&user).get();
+        let last_claim_day: usize = stake_info.last_claim_day;
+        let to_day: usize = stake_info.to_day;
+        let stake_amount = stake_info.stake_amount;
+
+        let cur_time: u64 = self.blockchain().get_block_timestamp();
+        let mut cur_day: usize = ((cur_time - self.staking_start_time().get()) / DAY_SECONDS) as usize;
+        if cur_day > to_day {
+            cur_day = to_day;
+        }
+        
+        
+        let mut rewards = BigUint::zero();
+        let d: usize;
+        for d in last_claim_day..cur_day {
+            let mut day_reward = BigUint::from(MONTHLY_REWARDS[d / (MONTH_DAYS as usize)]);
+            day_reward = day_reward.mul(&BigUint::from(POW_DECIMAL));
+            rewards += day_reward * stake_amount.clone() / self.day_distributed(d).get();
+        }
+        return rewards;
     }
 	
     #[view(getStakingTokenId)]
@@ -190,11 +243,11 @@ pub trait TokenStaking{
     #[storage_mapper("stakingInfo")]
     fn staking_info(&self, address: &ManagedAddress) -> SingleValueMapper<StakeInfo<Self::Api>>;
 
-    #[storage_mapper("monthDistributed")]
-    fn month_distributed(&self, month: usize) -> SingleValueMapper<BigUint>;
+    #[storage_mapper("dayDistributed")]
+    fn day_distributed(&self, day: usize) -> SingleValueMapper<BigUint>;
 
     #[event("stake")]
-    fn stake_event(&self, #[indexed] user: &ManagedAddress, #[indexed] stake_amount: &BigUint, #[indexed] stake_option: u32);
+    fn stake_event(&self, #[indexed] user: &ManagedAddress, #[indexed] stake_amount: &BigUint, #[indexed] stake_option: usize);
 
     #[event("unstake")]
     fn unstake_event(&self, #[indexed] user: &ManagedAddress, #[indexed] unstake_amount: &BigUint);   
