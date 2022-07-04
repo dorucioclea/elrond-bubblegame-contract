@@ -76,25 +76,32 @@ pub trait TokenStaking{
     #[endpoint(calcAPR)]
     fn calc_apr(&self) -> BigUint {
         require!(self.staking_status().get(), "The staking haven't started yet.");
-        let cur_time: u64 = self.blockchain().get_block_timestamp();
-        require!(cur_time < self.staking_end_time().get(), "The staking date has already passed"); 
-
-        let cur_day = (cur_time - self.staking_start_time().get()) / DAY_SECONDS;
         
-        let _month: usize = (cur_day / MONTH_DAYS) as usize;
-        let _day = cur_day % MONTH_DAYS;
-        let mut reward_amount = BigUint::zero();
-
-        let mut m: usize;
-        for m in 0.._month {          
-            reward_amount = reward_amount.add(&BigUint::from(MONTHLY_REWARDS[m]));
+        let total_staking_amount = self.total_staking_amount().get();
+        if total_staking_amount == BigUint::zero() {
+            return BigUint::zero();
         }
 
-        let reward = BigUint::from(MONTHLY_REWARDS[_month]).div(MONTH_DAYS).mul(_day + 1);
-        reward_amount = reward_amount.add(&reward).mul(&BigUint::from(POW_DECIMAL));
-        let total_staking_amount = self.total_staking_amount().get();
-        let apy: BigUint = reward_amount.mul(YEAR_DAYS).div(total_staking_amount).div(cur_day + 1);
-        return apy;
+        let cur_time: u64 = self.blockchain().get_block_timestamp();
+        let mut cur_day: usize = ((cur_time - self.staking_start_time().get()) / DAY_SECONDS) as usize;
+        if cur_day > STAKING_PERIOD_DAYS {
+            cur_day = STAKING_PERIOD_DAYS;
+        }
+
+        if cur_day == 0 {
+            return BigUint::zero();
+        }
+
+        let mut reward_amount = BigUint::zero();
+        let d: usize;
+        for d in 0..cur_day {
+            let mut day_reward = BigUint::from(MONTHLY_REWARDS[d / (MONTH_DAYS as usize)]);
+            day_reward = day_reward.mul(&BigUint::from(POW_DECIMAL));
+            reward_amount += day_reward;
+        }
+
+        let apr: BigUint = reward_amount.mul(YEAR_DAYS).div(total_staking_amount).div(cur_day as u64);
+        return apr;
     }
 
 
@@ -138,9 +145,12 @@ pub trait TokenStaking{
         }
 
         self.staking_info(&self.blockchain().get_caller()).set(&stake_info);
+        self.stake_event(&caller, &payment_amount, stake_option);
         
         let total_stake_amount = self.total_staking_amount().get();
         self.total_staking_amount().set(total_stake_amount.add(&payment_amount));
+
+
     }
 
     #[endpoint]
@@ -157,10 +167,9 @@ pub trait TokenStaking{
 
         self.send()
             .direct(&caller, &stake_token_id, 0, &stake_amount, &[]);
+        self.unstake_event(&caller, &stake_amount);
                
         self.staking_info(&caller).clear();
-        let total_stake_amount = self.total_staking_amount().get();
-        self.total_staking_amount().set(total_stake_amount.sub(&stake_amount));
     }
 
     #[endpoint]
@@ -174,14 +183,17 @@ pub trait TokenStaking{
         let stake_token_id = self.staking_token_id().get();
         let mut stake_info = self.staking_info(&caller).get();
         let to_day: usize = stake_info.to_day;
+        let lock_time = stake_info.lock_time;
+        let from_day = stake_info.from_day;
 
-        let mut cur_day: usize = ((cur_time - self.staking_start_time().get()) / DAY_SECONDS) as usize;
+        let mut cur_day: usize = from_day + ((cur_time - lock_time) / DAY_SECONDS) as usize;
         if cur_day > to_day {
             cur_day = to_day;
         }
         
         self.send()
             .direct(&caller, &stake_token_id, 0, &rewards, &[]);
+         self.claim_event(&caller, &rewards);
         
         stake_info.last_claim_time = cur_time;
         stake_info.last_claim_day = cur_day;
@@ -194,16 +206,18 @@ pub trait TokenStaking{
         require!(!self.staking_info(&user).is_empty(), "You didn't stake!");
 
         let stake_info = self.staking_info(&user).get();
+        let lock_time = stake_info.lock_time;
+        let from_day = stake_info.from_day;
         let last_claim_day: usize = stake_info.last_claim_day;
+        
         let to_day: usize = stake_info.to_day;
         let stake_amount = stake_info.stake_amount;
 
         let cur_time: u64 = self.blockchain().get_block_timestamp();
-        let mut cur_day: usize = ((cur_time - self.staking_start_time().get()) / DAY_SECONDS) as usize;
+        let mut cur_day: usize = from_day + ((cur_time - lock_time) / DAY_SECONDS) as usize;
         if cur_day > to_day {
             cur_day = to_day;
         }
-        
         
         let mut rewards = BigUint::zero();
         let d: usize;
@@ -251,4 +265,7 @@ pub trait TokenStaking{
 
     #[event("unstake")]
     fn unstake_event(&self, #[indexed] user: &ManagedAddress, #[indexed] unstake_amount: &BigUint);   
+
+    #[event("claim")]
+    fn claim_event(&self, #[indexed] user: &ManagedAddress, #[indexed] reward_amount: &BigUint);   
 }
