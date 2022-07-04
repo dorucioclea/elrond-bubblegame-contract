@@ -34,7 +34,6 @@ pub trait Governance:
         staking_provider: ManagedAddress,
         grace_period: u64,
         timelock_delay: u64,
-                
     ) {
         self.try_change_quorum(quorum);
         self.try_change_voting_delay_in_blocks(voting_delay_in_blocks);
@@ -80,22 +79,22 @@ pub trait Governance:
         return pstat;
     }
 
-    #[endpoint]
-    fn execute(&self, proposal_id: u64) {
-        require!(!self.proposal(proposal_id).is_empty(), PROPOSAL_NOT_FOUND);
-        let mut proposal = self.proposal(proposal_id).get();
-        let timestamp = self.blockchain().get_block_timestamp();
+    // #[endpoint]
+    // fn execute(&self, proposal_id: u64) {
+    //     require!(!self.proposal(proposal_id).is_empty(), PROPOSAL_NOT_FOUND);
+    //     let mut proposal = self.proposal(proposal_id).get();
+    //     let timestamp = self.blockchain().get_block_timestamp();
 
-        let pstat = self.get_proposal_status(&proposal);
-        require!(pstat == ProposalStatus::Queued, PROPOSAL_NOT_QUEUED);
-        require!(timestamp >= proposal.eta && timestamp < proposal.eta + self.grace_period().get(), NOT_SURPASSED_TIME_LOCK);
+    //     let pstat = self.get_proposal_status(&proposal);
+    //     require!(pstat == ProposalStatus::Queued, PROPOSAL_NOT_QUEUED);
+    //     require!(timestamp >= proposal.eta && timestamp < proposal.eta + self.grace_period().get(), NOT_SURPASSED_TIME_LOCK);
 
-        proposal.was_executed = true;
-        self.execute_proposal(&proposal);
-        self.proposal(proposal_id).set(&proposal);
+    //     proposal.was_executed = true;
+    //     self.execute_proposal(&proposal);
+    //     self.proposal(proposal_id).set(&proposal);
 
-        self.execute_proposal_event(proposal.id);
-    }
+    //     self.execute_proposal_event(proposal.id);
+    // }
 
     #[endpoint]
     fn queue(&self, proposal_id: u64) {
