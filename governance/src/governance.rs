@@ -96,36 +96,36 @@ pub trait Governance:
     //     self.execute_proposal_event(proposal.id);
     // }
 
-    #[endpoint]
-    fn queue(&self, proposal_id: u64) {
-        require!(!self.proposal(proposal_id).is_empty(), PROPOSAL_NOT_FOUND);
-        let mut proposal = self.proposal(proposal_id).get();
+    // #[endpoint]
+    // fn queue(&self, proposal_id: u64) {
+    //     require!(!self.proposal(proposal_id).is_empty(), PROPOSAL_NOT_FOUND);
+    //     let mut proposal = self.proposal(proposal_id).get();
 
-        let pstat = self.get_proposal_status(&proposal);
-        require!(pstat == ProposalStatus::Succeeded, PROPOSAL_NOT_SUCCEEDED);
+    //     let pstat = self.get_proposal_status(&proposal);
+    //     require!(pstat == ProposalStatus::Succeeded, PROPOSAL_NOT_SUCCEEDED);
 
-        proposal.eta = self.blockchain().get_block_timestamp() + self.timelock_delay().get();
-        self.proposal(proposal_id).set(&proposal);
+    //     proposal.eta = self.blockchain().get_block_timestamp() + self.timelock_delay().get();
+    //     self.proposal(proposal_id).set(&proposal);
 
-        self.queue_proposal_event(proposal_id);
-    }
+    //     self.queue_proposal_event(proposal_id);
+    // }
     
-    #[endpoint]
-    fn cancel(&self, proposal_id: u64) {
-        require!(!self.proposal(proposal_id).is_empty(), PROPOSAL_NOT_FOUND);
+    // #[endpoint]
+    // fn cancel(&self, proposal_id: u64) {
+    //     require!(!self.proposal(proposal_id).is_empty(), PROPOSAL_NOT_FOUND);
 
-        let mut proposal = self.proposal(proposal_id).get();
-        let pstat = self.get_proposal_status(&proposal);
-        let caller = self.blockchain().get_caller();
+    //     let mut proposal = self.proposal(proposal_id).get();
+    //     let pstat = self.get_proposal_status(&proposal);
+    //     let caller = self.blockchain().get_caller();
 
-        require!(pstat != ProposalStatus::Executed, PROPOSAL_NOT_CANCEL);
-        require!(caller == self.guardian().get(), CALLER_NOT_GUARDIAN);
+    //     require!(pstat != ProposalStatus::Executed, PROPOSAL_NOT_CANCEL);
+    //     require!(caller == self.guardian().get(), CALLER_NOT_GUARDIAN);
 
-        proposal.was_canceled = true;
-        self.proposal(proposal_id).set(&proposal);
+    //     proposal.was_canceled = true;
+    //     self.proposal(proposal_id).set(&proposal);
 
-        self.cancel_proposal_event(proposal_id);
-    }
+    //     self.cancel_proposal_event(proposal_id);
+    // }
 
     #[endpoint]
     fn vote(&self, proposal_id: u64, vote_type: VoteType) {
