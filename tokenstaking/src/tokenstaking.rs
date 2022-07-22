@@ -79,6 +79,9 @@ pub trait TokenStaking{
         
         let total_staking_amount = self.total_staking_amount().get();
 
+        if total_staking_amount == BigUint::zero() {
+            return BigUint::zero();
+        }
 
         let cur_time: u64 = self.blockchain().get_block_timestamp();
         let mut cur_day: usize = ((cur_time - self.staking_start_time().get()) / DAY_SECONDS) as usize;
@@ -90,9 +93,7 @@ pub trait TokenStaking{
             return BigUint::zero();
         }
 
-        if total_staking_amount == BigUint::zero() {
-            return BigUint::zero();
-        }
+        
 
         let mut reward_amount = BigUint::zero();
         let d: usize;
