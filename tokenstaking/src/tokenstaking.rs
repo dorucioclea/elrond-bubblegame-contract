@@ -216,12 +216,14 @@ pub trait TokenStaking{
 
         let cur_time: u64 = self.blockchain().get_block_timestamp();
         let mut cur_day: usize = from_day + ((cur_time - lock_time) / DAY_SECONDS) as usize;
-        if cur_day > to_day {
-            cur_day = to_day;
-        }
         
         let d: usize;
         let mut rewards = BigUint::zero();
+
+        if cur_day > to_day {
+            cur_day = to_day;
+        }
+
         for d in last_claim_day..cur_day {
             let mut day_reward = BigUint::from(MONTHLY_REWARDS[d / (MONTH_DAYS as usize)]);
             day_reward = day_reward.mul(&BigUint::from(POW_DECIMAL));
